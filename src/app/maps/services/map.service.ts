@@ -1,6 +1,8 @@
 import { Injectable } from '@angular/core';
-import { LngLatLike, Map, Marker, Popup } from 'mapbox-gl';
+import { AnySourceData, LngLatBounds, LngLatLike, Map, Marker, Popup, TouchPitchHandler } from 'mapbox-gl';
 import { Feature } from '../interfaces/places';
+import { DirectionsApiClient } from '../api';
+import { DirectionsResponse, Route } from '../interfaces/directions';
 
 @Injectable({
   providedIn: 'root',
@@ -8,6 +10,7 @@ import { Feature } from '../interfaces/places';
 export class MapService {
   private map?: Map;
   private markers: Marker[] = [];
+  constructor(private directionsApi: DirectionsApiClient) { }
 
   get isMapReady() {
     return !!this.map;
@@ -24,7 +27,7 @@ export class MapService {
       center: coords,
     });
   }
-  createMarkerFromPlaces(places: Feature[]) {
+  createMarkerFromPlaces(places: Feature[], userLocation: [number, number]) {
     if (!this.map) throw new Error("Mapa no inicializado");
     this.markers.forEach((marker) => marker.remove());
     const newMarkers = [];
@@ -39,5 +42,67 @@ export class MapService {
       newMarkers.push(newMarker);
     }
     this.markers = newMarkers;
+    if (places.length === 0) return;
+
+    // Limites del mapa
+    const bounds = new LngLatBounds();
+    newMarkers.forEach(marker => bounds.extend(marker.getLngLat()));
+    bounds.extend(userLocation);
+
+    this.map.fitBounds(bounds, {
+      padding: 150,
+    });
+  }
+  getRouteBeetwenPoints(origin: [number, number], destination: [number, number]) {
+    this.directionsApi.get<DirectionsResponse>(`/${origin.join(',')};${destination.join(',')}`).subscribe(resp =>
+      this.drawPolyline(resp.routes[0]));
+  }
+
+  private drawPolyline(route: Route) {
+    console.log({ KMs: route.distance / 1000, Duracion: route.duration / 60 });
+    if (!this.map) throw new Error("Mapa no inicializado");
+
+    const coords = route.geometry.coordinates;
+
+    const bounds = new LngLatBounds();
+    coords.forEach(([lng, lat]) => { bounds.extend([lng, lat]) });
+
+    this.map?.fitBounds(bounds, {
+      padding: 150,
+    })
+
+    const sourceDate: AnySourceData = {
+      type: 'geojson',
+      data: {
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: coords
+          }
+        }],
+      }
+    }
+    if (this.map.getLayer('RouteString')) {
+      this.map.removeLayer('RouteString');
+      this.map.removeSource('RouteString');
+
+    }
+    this.map.addSource('RouteString', sourceDate);
+    this.map.addLayer({
+      id: 'RouteString',
+      type: 'line',
+      source: 'RouteString',
+      layout: {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      paint: {
+        "line-color": "green",
+        "line-width": 3
+      }
+    });
   }
 }
